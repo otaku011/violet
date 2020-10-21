@@ -76,6 +76,11 @@ class _MainPage2State extends State<MainPage2>
       //   return;
       // }
 
+      if (Platform.isAndroid) {
+        await UpdateSyncManager.checkUpdateSync();
+        setState(() {});
+      }
+
       if (SyncManager.syncRequire) {
         setState(() {
           _syncAvailable = true;
@@ -379,7 +384,7 @@ class _MainPage2State extends State<MainPage2>
               elevation: 3.0,
             ),
             height: 40,
-            width: 100,
+            width: 105,
           ),
         ],
       ),

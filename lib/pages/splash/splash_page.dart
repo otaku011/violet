@@ -3,23 +3,31 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'package:circular_check_box/circular_check_box.dart';
 import 'package:country_pickers/country.dart';
 import 'package:country_pickers/country_pickers.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:material_design_icons_flutter/material_design_icons_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:violet/component/hitomi/indexs.dart';
+import 'package:violet/database/user/bookmark.dart';
+import 'package:violet/database/user/record.dart';
 import 'package:violet/locale/locale.dart';
+import 'package:violet/log/log.dart';
 import 'package:violet/pages/after_loading/afterloading_page.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:violet/other/dialogs.dart';
 import 'package:violet/pages/database_download/database_download_page.dart';
 import 'package:violet/pages/settings/settings_page.dart';
 import 'package:violet/settings/settings.dart';
+import 'package:violet/variables.dart';
 import 'package:violet/version/sync.dart';
 import 'package:violet/version/update_sync.dart';
 
@@ -58,29 +66,51 @@ class _SplashPageState extends State<SplashPage> {
     'zh': '9MB',
   };
 
+  Future<void> checkAuth() async {
+    if (await Permission.storage.isUndetermined) {
+      if (await Permission.storage.request() == PermissionStatus.denied) {
+        await Dialogs.okDialog(context, "파일 권한을 허용하지 않으면 다운로드 기능을 이용할 수 없습니다.");
+      }
+    }
+  }
+
   startTime() async {
-    var _duration = new Duration(milliseconds: 600);
+    var _duration = new Duration(milliseconds: 100);
     return new Timer(_duration, navigationPage);
   }
 
   Future<void> navigationPage() async {
-    await UpdateSyncManager.checkUpdateSync();
+    await Settings.init();
+    await Bookmark.getInstance();
+    await User.getInstance();
+    await Variables.init();
+    await HitomiIndexs.init();
+    await Logger.init();
+
+    if (Platform.isIOS) await UpdateSyncManager.checkUpdateSync();
 
     if ((await SharedPreferences.getInstance()).getInt('db_exists') == 1 &&
         !widget.switching) {
-      await SyncManager.checkSync();
-      if (!Platform.isAndroid) SyncManager.syncRequire = false;
-      if (!SyncManager.firstSync && SyncManager.chunkRequire) {
-        setState(() {
-          showIndicator = true;
-        });
-        await SyncManager.doChunkSync((_, len) async {
+      try {
+        await SyncManager.checkSync();
+        if (!Platform.isAndroid) SyncManager.syncRequire = false;
+        if (!SyncManager.firstSync && SyncManager.chunkRequire) {
           setState(() {
-            chunkDownloadMax = len;
-            chunkDownloadProgress++;
+            showIndicator = true;
           });
-        });
+          await SyncManager.doChunkSync((_, len) async {
+            setState(() {
+              chunkDownloadMax = len;
+              chunkDownloadProgress++;
+            });
+          });
+        }
+      } catch (e, st) {
+        // If an error occurs, stops synchronization immediately.
+        Crashlytics.instance.recordError(e, st);
       }
+
+      // We must show main page to user anyway
       Navigator.of(context).pushReplacementNamed('/AfterLoading');
     } else {
       if (!widget.switching) await Future.delayed(Duration(milliseconds: 1400));
@@ -99,14 +129,6 @@ class _SplashPageState extends State<SplashPage> {
       setState(() {
         scale1 = 1.03;
       });
-    }
-  }
-
-  Future<void> checkAuth() async {
-    if (await Permission.storage.isUndetermined) {
-      if (await Permission.storage.request() == PermissionStatus.denied) {
-        await Dialogs.okDialog(context, "파일 권한을 허용하지 않으면 다운로드 기능을 이용할 수 없습니다.");
-      }
     }
   }
 
@@ -168,11 +190,14 @@ class _SplashPageState extends State<SplashPage> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    Text('<< AutoSync >>'),
-                    Text(chunkDownloadProgress != chunkDownloadMax ||
-                            chunkDownloadMax == 0
-                        ? 'Chunk downloading...[$chunkDownloadProgress/$chunkDownloadMax]'
-                        : 'Extracting...'),
+                    Text('<< AutoSync >>',
+                        style: TextStyle(color: Colors.white)),
+                    Text(
+                        chunkDownloadProgress != chunkDownloadMax ||
+                                chunkDownloadMax == 0
+                            ? 'Chunk downloading...[$chunkDownloadProgress/${SyncManager.getSyncRequiredChunkCount()}]'
+                            : 'Extracting...',
+                        style: TextStyle(color: Colors.white)),
                     Container(
                       height: 16,
                     ),
